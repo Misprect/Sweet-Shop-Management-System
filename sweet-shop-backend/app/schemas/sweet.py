@@ -18,7 +18,7 @@ class SweetCreate(SweetBase):
 class SweetUpdate(SweetBase):
     name: Optional[str]= Field(None, max_length=100)
     price: Optional[float]= Field(None, gt=0.0)
-    srock_quantity: Optional[int]= Field(None, ge=0)
+    stock_quantity: Optional[int]= Field(None, ge=0)
     category: Optional[str]= Field(None, max_length=50)
 
 #--- 4. Schema for reading/returning a Sweet(includes DB-generated ID)---

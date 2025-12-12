@@ -104,3 +104,4 @@ def delete_sweet(
 
     db.delete(db_sweet)
     db.commit()
+    
