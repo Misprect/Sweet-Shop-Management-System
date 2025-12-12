@@ -8,21 +8,21 @@ class SweetBase(BaseModel):
     price: float= Field(..., gt=0.0)
     stock_quantity: int = Field(..., ge=0)
     is_available: bool= True
-    category: str= Feild(..., max_length=50)
+    category: str= Field(..., max_length=50)
 
 # --- 2. Schema for creating a new sweet(inherit base)---
 class SweetCreate(SweetBase):
     pass
 
 #--- 3. Schema for updating an existing sweeet(all fields optional)---
-class SweetUpdates(SweetBase):
+class SweetUpdate(SweetBase):
     name: Optional[str]= Field(None, max_length=100)
     price: Optional[float]= Field(None, gt=0.0)
     srock_quantity: Optional[int]= Field(None, ge=0)
-    category: Optional[str]= Feild(None, max_length=50)
+    category: Optional[str]= Field(None, max_length=50)
 
 #--- 4. Schema for reading/returning a Sweet(includes DB-generated ID)---
-class Sweets(SweetBase):
+class Sweet(SweetBase):
     id: int
     owner_id: int#we assume sweets are managed by a user/admin
 

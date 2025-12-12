@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from .db.database import Base, engine
 from .api.endpoints import auth 
+from .api.endpoints import sweets 
 
 # FIX: Temporarily comment out the table creation so the app can start without 
 # connecting to the real database during testing (pytest will use its own setup).

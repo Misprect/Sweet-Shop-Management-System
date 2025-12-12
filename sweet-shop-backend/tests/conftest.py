@@ -93,3 +93,50 @@ def client(session):
     
     # Clean up the dependency override after the test
     app.dependency_overrides.clear()
+
+# --- 4. AUTHENTICATION FIXTURES ---
+
+@pytest.fixture(scope="session")
+def admin_user_data():
+    """Returns data for the initial (admin) user."""
+    return {
+        "email": "admin@sweetshop.com",
+        "password": "securepassword123"
+    }
+
+@pytest.fixture(scope="session")
+def admin_auth_headers(client, admin_user_data):
+    """Registers the first user (who becomes admin) and logs them in, 
+    returning authorization headers."""
+    # 1. Register the admin user
+    client.post("/api/auth/register", json=admin_user_data)
+    
+    # 2. Log in the admin user to get a token
+    response = client.post(
+        "/api/auth/token",
+        data={"username": admin_user_data["email"], "password": admin_user_data["password"]},
+    )
+    
+    # 3. Extract the token and format the header
+    access_token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {access_token}"}
+    
+@pytest.fixture(scope="session")
+def regular_user_auth_headers(client):
+    """Registers a second user (who is a regular user) and logs them in."""
+    user_data = {
+        "email": "user@sweetshop.com",
+        "password": "userpassword123"
+    }
+    # 1. Register the regular user (will not be admin)
+    client.post("/api/auth/register", json=user_data)
+    
+    # 2. Log in the regular user
+    response = client.post(
+        "/api/auth/token",
+        data={"username": user_data["email"], "password": user_data["password"]},
+    )
+    
+    # 3. Extract the token and format the header
+    access_token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {access_token}"}

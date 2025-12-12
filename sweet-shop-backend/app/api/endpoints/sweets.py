@@ -13,12 +13,12 @@ router = APIRouter(
     tags=["Sweets"]
 )
 
-# --- 1.POST /sweets ---
+# --- 1. POST /sweets (Create Sweet - ADMIN ONLY) ---
 @router.post("/", response_model=Sweet, status_code=status.HTTP_201_CREATED)
 def create_sweet(
     sweet_in: SweetCreate, 
     db: Session = Depends(get_db),
-    # Only allow active ADMIN users to create sweets
+    # Dependency to ensure only active ADMIN users can create sweets
     current_user: UserModel = Depends(get_current_active_user)
 ):
     if not current_user.is_admin:
@@ -41,8 +41,66 @@ def create_sweet(
     return db_sweet
 
 
-# --- 2.GET /sweets ---
+# --- 2. GET /sweets (Read All Sweets - PUBLIC) ---
 @router.get("/", response_model=List[Sweet])
 def read_sweets(db: Session = Depends(get_db)):
     sweets = db.query(SweetModel).all()
     return sweets
+
+
+# --- 3. GET /sweets/{sweet_id} (Read Single Sweet - PUBLIC) ---
+@router.get("/{sweet_id}", response_model=Sweet)
+def read_sweet_by_id(sweet_id: int, db: Session = Depends(get_db)):
+    db_sweet = db.query(SweetModel).filter(SweetModel.id == sweet_id).first()
+    if db_sweet is None:
+        raise HTTPException(status_code=404, detail="Sweet not found")
+    return db_sweet
+
+
+# --- 4. PUT /sweets/{sweet_id} (Update Sweet - ADMIN ONLY) ---
+@router.put("/{sweet_id}", response_model=Sweet)
+def update_sweet(
+    sweet_id: int, 
+    sweet_in: SweetUpdate, 
+    db: Session = Depends(get_db), 
+    current_user: UserModel = Depends(get_current_active_user)
+):
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Only administrators can update sweets."
+        )
+    
+    db_sweet = db.query(SweetModel).filter(SweetModel.id == sweet_id).first()
+    if db_sweet is None:
+        raise HTTPException(status_code=404, detail="Sweet not found")
+
+    # Update attributes only if they are provided in sweet_in (exclude_unset=True is key here)
+    for key, value in sweet_in.model_dump(exclude_unset=True).items():
+        setattr(db_sweet, key, value)
+
+    db.add(db_sweet)
+    db.commit()
+    db.refresh(db_sweet)
+    return db_sweet
+
+
+# --- 5. DELETE /sweets/{sweet_id} (Delete Sweet - ADMIN ONLY) ---
+@router.delete("/{sweet_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_sweet(
+    sweet_id: int, 
+    db: Session = Depends(get_db), 
+    current_user: UserModel = Depends(get_current_active_user)
+):
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Only administrators can delete sweets."
+        )
+        
+    db_sweet = db.query(SweetModel).filter(SweetModel.id == sweet_id).first()
+    if db_sweet is None:
+        raise HTTPException(status_code=404, detail="Sweet not found")
+
+    db.delete(db_sweet)
+    db.commit()
