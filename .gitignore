@@ -1,16 +1,21 @@
-"# Python"  
-"__pycache__/" 
-"*.pyc" 
-".env" 
-"venv/" 
-"transformer-2/" 
-"" 
-"# Database" 
-"*.db" 
-"" 
-"# Node/React" 
-"node_modules" 
-"build" 
-"dist" 
-".DS_Store" 
-"npm-debug.log" 
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyd
+*.so
+*.egg
+*.whl
+
+# Environment files
+.env
+.venv
+venv/
+env/
+
+# IDE files (common examples)
+.vscode/
+.idea/
+
+# Testing related
+/htmlcov/
+.pytest_cache/
