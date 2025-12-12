@@ -1,5 +1,3 @@
-# sweet-shop-backend/tests/conftest.py
-
 import sys
 import os
 import pytest
@@ -7,7 +5,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
 
-# --- PATH FIX: Add the 'sweet-shop-backend' directory to the system path ---
 # This allows imports like 'from app.main import app' to resolve correctly 
 # by making the 'app' directory available as a package.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -44,7 +41,7 @@ def setup_db(engine):
     # Cleanup: Drop tables after the test session is complete
     Base.metadata.drop_all(bind=engine)
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def session(engine, setup_db):
     """
     Creates a new database session wrapped in a transaction for each test function.
@@ -79,7 +76,7 @@ def override_get_db_dependency(session):
 
 
 # --- 3. TEST CLIENT FIXTURE ---
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def client(session):
     """
     Creates a TestClient that uses the overridden database dependency, 
@@ -105,7 +102,7 @@ def admin_user_data():
     }
 
 @pytest.fixture(scope="session")
-def admin_auth_headers(client, admin_user_data):
+def admin_auth_headers(client, admin_user_data): 
     """Registers the first user (who becomes admin) and logs them in, 
     returning authorization headers."""
     # 1. Register the admin user
@@ -117,13 +114,18 @@ def admin_auth_headers(client, admin_user_data):
         data={"username": admin_user_data["email"], "password": admin_user_data["password"]},
     )
     
+    # REMOVED DIAGNOSIS CODE
+    
     # 3. Extract the token and format the header
     access_token = response.json()["access_token"]
     return {"Authorization": f"Bearer {access_token}"}
     
 @pytest.fixture(scope="session")
-def regular_user_auth_headers(client):
+def regular_user_auth_headers(client, admin_auth_headers): # <-- DEPEND ON ADMIN FIXTURE
     """Registers a second user (who is a regular user) and logs them in."""
+    # This dependency ensures admin_auth_headers runs first, guaranteeing
+    # that the regular user is *not* the first user, and thus not an admin.
+    
     user_data = {
         "email": "user@sweetshop.com",
         "password": "userpassword123"

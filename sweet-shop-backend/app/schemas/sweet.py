@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 
 #---1.Base schema (used for common attributes)---
@@ -26,5 +26,4 @@ class Sweet(SweetBase):
     id: int
     owner_id: int#we assume sweets are managed by a user/admin
 
-    class Config:
-        from_attributes= True
+    model_config= ConfigDict(from_attributes=True)
