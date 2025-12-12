@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, Float
+from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey
+from sqlalchemy.orm import relationship # <-- NEW IMPORT
 from .database import Base
 
 # --- User Model ---
@@ -9,9 +10,12 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     is_admin = Column(Boolean, default=False)
-    is_active = Column(Boolean(name='is_active'), default=True) # Explicit boolean name for compatibility
+    is_active = Column(Boolean(name='is_active'), default=True)
     
-# --- Sweet Model ---
+    # NEW: Relationship for all the sweets this user/admin manages
+    sweets = relationship("Sweet", back_populates="owner")
+    
+# --- Sweet Model ---   
 class Sweet(Base):
     __tablename__ = "sweets"
 
@@ -20,3 +24,9 @@ class Sweet(Base):
     category = Column(String, index=True)
     price = Column(Float)
     quantity = Column(Integer, default=0)
+    
+    # NEW: Link to the User/Admin who manages this sweet
+    owner_id = Column(Integer, ForeignKey("users.id")) # <-- NEW COLUMN
+    
+    # NEW: Relationship back to the User model
+    owner = relationship("User", back_populates="sweets") # <-- NEW RELATIONSHIP

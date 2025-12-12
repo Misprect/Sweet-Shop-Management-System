@@ -10,3 +10,4 @@ app = FastAPI(title="Sweet Shop Management System")
 
 # Include the authentication router
 app.include_router(auth.router, prefix="/api")
+app.include_router(sweets.router, prefix="/api")
