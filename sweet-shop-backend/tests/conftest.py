@@ -4,21 +4,19 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.testclient import TestClient
+from typing import Dict # Added for type hinting clarity
 
 # This allows imports like 'from app.main import app' to resolve correctly 
-# by making the 'app' directory available as a package.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # --- IMPORTS FROM YOUR PROJECT ---
-# Corrected imports based on the structure: app/db/database.py and app/db/models.py
 from app.main import app
 from app.db.database import get_db
+# Import the base class for model creation (check your structure if Base is in database.py)
 from app.db.models import Base 
-# Note: If Base is defined in database.py instead of models.py, 
-# you might need to adjust 'from app.db.models import Base' accordingly.
+# ---------------------------------
 
 # --- 1. SETUP THE TEST DATABASE ENGINE ---
-# Using an in-memory SQLite database for fast, isolated testing
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
 
 @pytest.fixture(scope="session")
@@ -26,7 +24,6 @@ def engine():
     """Create a new database engine for the entire test session."""
     return create_engine(
         SQLALCHEMY_DATABASE_URL, 
-        # Required for SQLite to run across different threads/scopes
         connect_args={"check_same_thread": False}
     )
 
@@ -34,23 +31,20 @@ def engine():
 def setup_db(engine):
     """
     Creates all tables before the tests run and drops them after the session ends.
-    This resolves the "no such table: users" error.
     """
     Base.metadata.create_all(bind=engine)
     yield
-    # Cleanup: Drop tables after the test session is complete
     Base.metadata.drop_all(bind=engine)
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function") # Changed scope to 'function' for better isolation!
 def session(engine, setup_db):
     """
-    Creates a new database session wrapped in a transaction for each test function.
-    The transaction is rolled back at the end of the test for clean state.
+    Creates a new database session, rolls back at the end of the test.
+    We use 'function' scope to ensure fresh data for every single test.
     """
     connection = engine.connect()
     transaction = connection.begin()
     
-    # Bind the session to the connection
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=connection)
     db = SessionLocal()
 
@@ -62,50 +56,63 @@ def session(engine, setup_db):
         connection.close()
 
 
+# --- FIXTURE ALIASES (Fixes 'db' not found error) ---
+# The tests in test_orders.py expect a 'db' fixture, but you called it 'session'.
+# This aliases the 'session' fixture to 'db'.
+@pytest.fixture(scope="function")
+def db(session):
+    yield session
+
+
 # --- 2. OVERRIDE THE FastAPI DEPENDENCY ---
-def override_get_db_dependency(session):
+def override_get_db_dependency(db): # Changed parameter name to 'db' for consistency
     """A closure to return a generator that yields the test session."""
     def _get_db_override():
         try:
-            # Yield the session created by the 'session' fixture
-            yield session
+            yield db
         finally:
-            # The 'session' fixture handles closing and rollback, so we do nothing here
             pass 
     return _get_db_override
 
 
 # --- 3. TEST CLIENT FIXTURE ---
-@pytest.fixture(scope="session")
-def client(session):
+# Changed scope to 'function' to ensure a fresh client and DB override for each test.
+@pytest.fixture(scope="function") 
+def client(db):
     """
-    Creates a TestClient that uses the overridden database dependency, 
-    ensuring every test uses the isolated, transactional session.
+    Creates a TestClient that uses the overridden database dependency.
     """
-    # Override the app's real 'get_db' dependency with our testing session
-    app.dependency_overrides[get_db] = override_get_db_dependency(session)
+    app.dependency_overrides[get_db] = override_get_db_dependency(db)
 
     with TestClient(app) as test_client:
         yield test_client
     
-    # Clean up the dependency override after the test
     app.dependency_overrides.clear()
 
 # --- 4. AUTHENTICATION FIXTURES ---
+# Changed scope to 'function' so users are re-registered for each test group, ensuring the admin status is always correct.
 
-@pytest.fixture(scope="session")
-def admin_user_data():
+@pytest.fixture(scope="function")
+def admin_user_data() -> Dict[str, str]:
     """Returns data for the initial (admin) user."""
     return {
         "email": "admin@sweetshop.com",
         "password": "securepassword123"
     }
 
-@pytest.fixture(scope="session")
-def admin_auth_headers(client, admin_user_data): 
-    """Registers the first user (who becomes admin) and logs them in, 
-    returning authorization headers."""
+@pytest.fixture(scope="function")
+def regular_user_data() -> Dict[str, str]:
+    """Returns data for the regular user."""
+    return {
+        "email": "user@sweetshop.com",
+        "password": "userpassword123"
+    }
+
+@pytest.fixture(scope="function")
+def admin_auth_headers(client: TestClient, admin_user_data: Dict[str, str]) -> Dict[str, str]: 
+    """Registers the first user (admin) and logs them in, returning authorization headers."""
     # 1. Register the admin user
+    # NOTE: This ensures the user is the FIRST user, making them an admin per auth.py logic
     client.post("/api/auth/register", json=admin_user_data)
     
     # 2. Log in the admin user to get a token
@@ -114,31 +121,43 @@ def admin_auth_headers(client, admin_user_data):
         data={"username": admin_user_data["email"], "password": admin_user_data["password"]},
     )
     
-    # REMOVED DIAGNOSIS CODE
-    
+    # Check if the token creation was successful (debug)
+    if response.status_code != 200:
+        raise Exception(f"Admin login failed with status {response.status_code}: {response.json()}")
+
     # 3. Extract the token and format the header
     access_token = response.json()["access_token"]
     return {"Authorization": f"Bearer {access_token}"}
     
-@pytest.fixture(scope="session")
-def regular_user_auth_headers(client, admin_auth_headers): # <-- DEPEND ON ADMIN FIXTURE
-    """Registers a second user (who is a regular user) and logs them in."""
-    # This dependency ensures admin_auth_headers runs first, guaranteeing
-    # that the regular user is *not* the first user, and thus not an admin.
+@pytest.fixture(scope="function")
+def regular_user_auth_headers(client: TestClient, admin_auth_headers: Dict[str, str], regular_user_data: Dict[str, str]) -> Dict[str, str]:
+    """Registers a second user (regular user) and logs them in."""
+    # Dependency on admin_auth_headers ensures the admin is registered first.
     
-    user_data = {
-        "email": "user@sweetshop.com",
-        "password": "userpassword123"
-    }
     # 1. Register the regular user (will not be admin)
-    client.post("/api/auth/register", json=user_data)
+    client.post("/api/auth/register", json=regular_user_data)
     
     # 2. Log in the regular user
     response = client.post(
         "/api/auth/token",
-        data={"username": user_data["email"], "password": user_data["password"]},
+        data={"username": regular_user_data["email"], "password": regular_user_data["password"]},
     )
+    
+    if response.status_code != 200:
+        raise Exception(f"Regular user login failed with status {response.status_code}: {response.json()}")
     
     # 3. Extract the token and format the header
     access_token = response.json()["access_token"]
     return {"Authorization": f"Bearer {access_token}"}
+
+# --- NEW FIXTURES RETURNING ONLY THE TOKEN STRING (Fixes token not found errors) ---
+
+@pytest.fixture(scope="function")
+def admin_token(admin_auth_headers: Dict[str, str]) -> str:
+    """Returns just the raw access token string for the admin user."""
+    return admin_auth_headers["Authorization"].split(" ")[1]
+
+@pytest.fixture(scope="function")
+def regular_user_token(regular_user_auth_headers: Dict[str, str]) -> str:
+    """Returns just the raw access token string for the regular user."""
+    return regular_user_auth_headers["Authorization"].split(" ")[1]

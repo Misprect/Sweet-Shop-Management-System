@@ -1,10 +1,10 @@
 from passlib.context import CryptContext
-from datetime import datetime, timedelta, timezone # Updated timezone import
+from datetime import datetime, timedelta, timezone 
 from typing import Optional
-from jose import jwt, JWTError # Added JWTError
-from sqlalchemy.orm import Session # Required for database interaction
+from jose import jwt, JWTError 
+from sqlalchemy.orm import Session 
 
-# NEW IMPORTS FOR AUTH DEPENDENCIES
+# REQUIRED IMPORTS FOR AUTH DEPENDENCIES
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 # End of new imports
@@ -12,8 +12,9 @@ from fastapi.security import OAuth2PasswordBearer
 from .config import settings
 # Import your database and model dependencies (these should exist in your project structure)
 from ..db.database import get_db
-# Use local import for User model to avoid circular dependency issues during testing
-# from ..db.models import User # If you need a global import
+# Note: Since the User model is imported locally in get_user_by_email, 
+# we don't need a top-level import here, which helps avoid circular imports.
+# from ..db.models import User # (Keep this commented out)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -36,24 +37,21 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
         # Use timezone.utc for full compatibility with datetime.now(timezone.utc)
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        # NOTE: Changed datetime.utcnow() to datetime.now(timezone.utc) + timedelta
         expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    # Note: Use "sub" (subject) for the user identifier (email) in the token payload
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
-# --- 3. Token Validation and User Retrieval (The Missing Code) ---
+# --- 3. Token Validation and User Retrieval ---
 
-# This defines the FastAPI dependency that looks for the 'Authorization: Bearer <token>' header
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 def get_user_by_email(db: Session, email: str):
     """Utility function to retrieve a user by email."""
-    # Local import is safer here if models is involved in main.py initialization
-    from app.db.models import User 
-    return db.query(User).filter(User.email == email).first()
+    # Local import is safer here to prevent issues with module loading order
+    from app.db.models import User as UserModel # <-- Use an alias for clarity
+    return db.query(UserModel).filter(UserModel.email == email).first()
 
 def get_current_user(
     db: Session = Depends(get_db), 
@@ -81,7 +79,21 @@ def get_current_user(
     return user
 
 def get_current_active_user(current_user: get_current_user = Depends(get_current_user)):
-    """The function that was missing! Ensures the user retrieved by the token is active."""
+    """Ensures the user retrieved by the token is active."""
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+# --- 4. NEW FUNCTION TO RESOLVE THE IMPORT ERROR ---
+
+def get_current_admin_user(current_user: get_current_user = Depends(get_current_active_user)):
+    """
+    Dependency that verifies the token, finds the active user, 
+    and checks if the user has admin privileges.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operation not permitted: Admin privileges required."
+        )
     return current_user

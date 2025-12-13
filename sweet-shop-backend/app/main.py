@@ -1,7 +1,10 @@
 from fastapi import FastAPI
 from .db.database import Base, engine
 from .api.endpoints import auth 
-from .api.endpoints import sweets 
+from .api.endpoints import sweets
+from .api.endpoints import user
+from .api.endpoints import orders 
+from app.db import models
 
 # FIX: Temporarily comment out the table creation so the app can start without 
 # connecting to the real database during testing (pytest will use its own setup).
@@ -11,4 +14,6 @@ app = FastAPI(title="Sweet Shop Management System")
 
 # Include the authentication router
 app.include_router(auth.router, prefix="/api")
-app.include_router(sweets.router, prefix="/api")
+app.include_router(sweets.router, prefix="/api") 
+app.include_router(user.router, prefix="/api")
+app.include_router(orders.router, prefix="/api")
