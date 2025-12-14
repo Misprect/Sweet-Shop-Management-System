@@ -1,19 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload 
+from sqlalchemy import select 
 from typing import List
 
 # --- CORRECTED IMPORTS ---
-# Import the get_db dependency from the database module
 from ...db.database import get_db
-
-# Import the security dependency from the core/security module
 from ...core.security import get_current_user 
-
-# Import the database model package
 from ...db import models 
 
-# Import Pydantic schemas
-from ...schemas.order import OrderCreate, Order as OrderSchema, OrderItemCreate, OrderItem as OrderItemSchema
+# NOTE: You MUST ensure these Pydantic schemas exist and OrderAdmin is defined
+from ...schemas.order import OrderCreate, Order as OrderSchema, OrderItemCreate, OrderItem as OrderItemSchema, OrderStatusUpdate, OrderAdmin
 from ...schemas.user import User as UserSchema
 # -------------------------
 
@@ -41,51 +37,42 @@ def create_order(
 
     order_items_to_create = []
     total_price = 0.0
-    # 1. First Pass: Check Stock, Calculate Price, and Prepare OrderItems
     for item_in in order_in.items:
         sweet = db.query(models.Sweet).filter(models.Sweet.id == item_in.sweet_id).first()
 
-        # a) Validate Sweet Exists and is Available
         if not sweet or not sweet.is_available:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Sweet with ID {item_in.sweet_id} not found or is currently unavailable."
             )
 
-        # b) Validate Stock
         if sweet.stock_quantity < item_in.quantity:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Insufficient stock for {sweet.name}. Requested: {item_in.quantity}, Available: {sweet.stock_quantity}"
             )
 
-        # c) Capture Price and Calculate Total
         item_price = sweet.price * item_in.quantity
         total_price += item_price
 
-        # Prepare the OrderItem record data (before order_id is known)
         order_items_to_create.append({
             "sweet_id": sweet.id,
             "quantity": item_in.quantity,
             "price_at_purchase": sweet.price,
-            "sweet_model": sweet # Store model reference to update stock later
+            "sweet_model": sweet 
         })
 
-    # 2. Create the main Order record
     db_order = models.Order(
         owner_id=current_user.id,
         total_price=total_price,
-        # status defaults to "Pending"
     )
     db.add(db_order)
-    db.commit() # Commit the order to get the primary key (order_id)
+    db.commit()
     db.refresh(db_order)
     
-    # 3. Second Pass: Create OrderItems and Deduct Stock
     for item_data in order_items_to_create:
-        sweet_model = item_data.pop("sweet_model") # Retrieve the model reference
+        sweet_model = item_data.pop("sweet_model") 
 
-        # Create the OrderItem record
         db_order_item = models.OrderItem(
             order_id=db_order.id,
             sweet_id=item_data["sweet_id"],
@@ -94,42 +81,113 @@ def create_order(
         )
         db.add(db_order_item)
         
-        # Deduct the stock
         sweet_model.stock_quantity -= item_data["quantity"]
-        db.add(sweet_model) # SQLAlchemy tracks changes automatically, but explicit add is safe
+        db.add(sweet_model) 
 
-    # 4. Final Commit and Return
     db.commit()
     db.refresh(db_order)
     
-    # Reload items relationship to include details for the response model
+    # Reload the order with items/sweet names for the response
     db.refresh(db_order, attribute_names=['items'])
-    return db_order
+    
+    # Manually map items to include sweet name before returning
+    order_dict = db_order.__dict__.copy()
+    items_list_for_pydantic = []
+    for item in db_order.items:
+        # Check if the sweet relationship exists before accessing name
+        if hasattr(item, 'sweet') and item.sweet:
+            item_dict = item.__dict__.copy()
+            item_dict['name'] = item.sweet.name 
+            items_list_for_pydantic.append(item_dict)
+        else:
+            # Fallback if eager loading failed for some reason
+            items_list_for_pydantic.append(item.__dict__.copy())
+            
+    order_dict['items'] = items_list_for_pydantic
+    
+    return OrderSchema(**order_dict)
 
-# --- 2. GET /orders: Fetch a list of orders ---
-@router.get("/", response_model=List[OrderSchema])
+
+# --- 2. GET /orders: Fetch a list of orders (FINAL WORKING VERSION) ---
+@router.get("/", response_model=List[OrderSchema]) 
 def read_orders(
     db: Session = Depends(get_db),
     current_user: UserSchema = Depends(get_current_user)
 ):
     """
     Retrieves a list of orders. 
-    Admins see all orders. Regular users see only their own orders.
+    Admins see all orders with user email. Regular users see only their own orders.
     """
     
-    # 1. Start the query on the Order model
-    query = db.query(models.Order)
-    
-    # 2. Apply authorization filter
-    if not current_user.is_admin:
-        # If not admin, filter by owner_id (the current user's ID)
-        query = query.filter(models.Order.owner_id == current_user.id)
-    
-    # 3. Execute the query, ordering by creation date descending
-    orders = query.order_by(models.Order.created_at.desc()).all()
-    return orders
+    if current_user.is_admin:
+        # Admin logic: Fetch all orders, join User for email, and eagerly load nested relationships.
+        
+        # 1. Define the selection statement: Select ALL Order columns and the joined User email.
+        # This uses positional indexing for ultimate reliability.
+        stmt = select(
+            models.Order,
+            models.User.email.label("user_email") # <-- This provides the email at position [1]
+        ).join(models.User, models.Order.owner_id == models.User.id) \
+          .options(
+              # Eagerly load order items and the sweet related to each item
+              joinedload(models.Order.items).joinedload(models.OrderItem.sweet) 
+          ) \
+         .order_by(models.Order.created_at.desc())
+         
+        # 2. Execute the statement
+        result = db.execute(stmt)
+        orders_data = result.unique().all() 
+        
+        orders_list = []
+        for row in orders_data:
+            # CRITICAL: Order model is at index 0, User email is at index 1
+            order_obj = row[0] 
+            user_email = row[1] 
+
+            # Convert ORM object to dict 
+            order_dict = order_obj.__dict__.copy()
+            
+            # 3. Map items, including the Sweet Name (now available via the eager load)
+            items_list_for_pydantic = []
+            for item in order_obj.items:
+                item_dict = item.__dict__.copy()
+                # CRITICAL: Access the name from the eagerly loaded sweet relationship
+                item_dict['name'] = item.sweet.name 
+                items_list_for_pydantic.append(item_dict)
+
+            order_dict['items'] = items_list_for_pydantic
+            order_dict['user_email'] = user_email # <--- Using the guaranteed user_email
+            
+            # Pass the combined dictionary to the OrderAdmin schema
+            orders_list.append(OrderAdmin(**order_dict)) 
+            
+        return orders_list
+        
+    else:
+        # Regular User logic: Filter by owner_id (also eagerly load items for performance)
+        orders = db.query(models.Order).filter(models.Order.owner_id == current_user.id) \
+             .options(
+                 joinedload(models.Order.items).joinedload(models.OrderItem.sweet)
+             ) \
+             .order_by(models.Order.created_at.desc()).all()
+             
+        # Manually map items to include sweet name for the standard OrderSchema as well
+        orders_list = []
+        for order_obj in orders:
+            order_dict = order_obj.__dict__.copy()
+            items_list_for_pydantic = []
+            for item in order_obj.items:
+                item_dict = item.__dict__.copy()
+                item_dict['name'] = item.sweet.name 
+                items_list_for_pydantic.append(item_dict)
+            order_dict['items'] = items_list_for_pydantic
+            orders_list.append(OrderSchema(**order_dict)) 
+
+        return orders_list
+
 
 # --- 3. GET /orders/{order_id}: Fetch a single order ---
+
 @router.get("/{order_id}", response_model=OrderSchema)
 def read_order(
     order_id: int,
@@ -141,21 +199,87 @@ def read_order(
     Access is restricted to the owner of the order or an Admin user.
     """
     
-    # 1. Fetch the order
-    db_order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    # Eagerly load items and sweet for single order view
+    db_order = db.query(models.Order).filter(models.Order.id == order_id) \
+        .options(
+            joinedload(models.Order.items).joinedload(models.OrderItem.sweet)
+        ).first()
     
-    # 2. Check if the order exists
     if not db_order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Order with ID {order_id} not found."
         )
         
-    # 3. Apply authorization check (Owner OR Admin)
-    # Check if the current user is neither the owner nor an admin
     if db_order.owner_id != current_user.id and not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this order."
         )     
-    return db_order
+
+    # Map items to include sweet name before returning
+    order_dict = db_order.__dict__.copy()
+    items_list_for_pydantic = []
+    for item in db_order.items:
+        item_dict = item.__dict__.copy()
+        item_dict['name'] = item.sweet.name 
+        items_list_for_pydantic.append(item_dict)
+    order_dict['items'] = items_list_for_pydantic
+    
+    return OrderSchema(**order_dict)
+
+
+# --- 4. PATCH /orders/{order_id}/status: Update order status (ADMIN ONLY) ---
+@router.patch("/{order_id}/status", response_model=OrderSchema)
+def update_order_status(
+    order_id: int,
+    status_update: OrderStatusUpdate, 
+    db: Session = Depends(get_db),
+    current_user: UserSchema = Depends(get_current_user)
+):
+    """
+    Updates the status of an order. Restricted to Admin users.
+    """
+    # 1. Authorization: Only Admin can update status
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can update order status."
+        )
+
+    # 2. Validation: Check if the new status is valid
+    valid_statuses = ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"]
+    if status_update.status not in valid_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status value. Must be one of: {', '.join(valid_statuses)}"
+        )
+
+    # 3. Fetch the order
+    db_order = db.query(models.Order).filter(models.Order.id == order_id).first()
+
+    if not db_order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Order with ID {order_id} not found."
+        )
+
+    # 4. Update and Commit
+    db_order.status = status_update.status
+    db.add(db_order)
+    db.commit()
+    
+    # Reload the order with items/sweet names for the response
+    db_order = db.query(models.Order).filter(models.Order.id == order_id) \
+        .options(joinedload(models.Order.items).joinedload(models.OrderItem.sweet)).first()
+    
+    # Map items to include sweet name before returning
+    order_dict = db_order.__dict__.copy()
+    items_list_for_pydantic = []
+    for item in db_order.items:
+        item_dict = item.__dict__.copy()
+        item_dict['name'] = item.sweet.name 
+        items_list_for_pydantic.append(item_dict)
+    order_dict['items'] = items_list_for_pydantic
+    
+    return OrderSchema(**order_dict)

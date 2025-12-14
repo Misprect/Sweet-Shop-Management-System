@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker
 
 # --- MYSQL CONNECTION URL (FINALIZED) ---
 # User: root, Password: 1234, DB Name: sweet-shop-management
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:1234@localhost:3306/sweet-shop-management"
+SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:1234@localhost:3306/sweetshop_db"
 
 # Create the SQLAlchemy engine
 engine = create_engine(

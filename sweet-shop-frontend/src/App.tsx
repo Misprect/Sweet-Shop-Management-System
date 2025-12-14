@@ -5,7 +5,7 @@ import { AuthProvider } from './context/AuthContext.tsx';
 import useAuth from './hooks/useAuth.ts';
 
 // Components
-import Navbar from './components/Layout/Navbar.tsx'; 
+import Navbar from './components/layout/Navbar.tsx'; 
 import LoginForm from './components/Auth/LoginForm.tsx';
 import RegisterForm from './components/Auth/RegisterForm.tsx'; 
 import Dashboard from './components/Dashboard.tsx';

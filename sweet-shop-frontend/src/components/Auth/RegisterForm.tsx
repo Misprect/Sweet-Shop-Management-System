@@ -23,17 +23,25 @@ const RegisterForm: React.FC = () => {
             // Call the register function provided by AuthContext
             await register(email, password);
             
-            // On successful registration, set success message
-            setSuccessMessage('Registration successful! Redirecting to login...');
-
-            // Wait a moment and then navigate to the Login page
-            setTimeout(() => {
-                navigate('/login'); 
-            }, 1500);
+            // Note: AuthContext already calls login and navigates on success, 
+            // so this success message and timeout are now redundant but kept for now.
+            setSuccessMessage('Registration successful! Redirecting...');
 
         } catch (err: any) {
-            // Display the specific error message from the AuthContext
-            const errorMessage = err.response?.data?.detail || 'Registration failed. This email may already be in use.';
+            // --- FIX APPLIED HERE ---
+            // AuthContext now throws a string, so we must check for that type.
+            
+            let errorMessage = 'Registration failed. Please check your network connection.';
+            
+            // If the thrown error is a string (from AuthContext, e.g., "Validation Error: field required")
+            if (typeof err === 'string') {
+                errorMessage = err;
+            } 
+            // Fallback for unexpected structured errors (less likely now)
+            else if (err.response?.data?.detail) {
+                errorMessage = err.response.data.detail;
+            }
+            
             setError(errorMessage);
         }
     };
@@ -48,7 +56,7 @@ const RegisterForm: React.FC = () => {
                     <div className="card-body">
                         {error && (
                             <div className="alert alert-danger" role="alert">
-                                {error}
+                                **Error:** {error}
                             </div>
                         )}
                         {successMessage && (

@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey, DateTime, Text 
 from sqlalchemy.orm import relationship 
 from sqlalchemy.sql import func
-from datetime import datetime, UTC # <-- CORRECTED: Added UTC for timezone-aware operation
+from datetime import datetime, UTC 
 from .database import Base
 
 # --- User Model (Updated) ---
@@ -10,9 +10,21 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
+    
+    # --- NEW: Add username field for display (Required for Order Admin View) ---
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    # -------------------------------------------------------------------------
+    
     hashed_password = Column(String, nullable=False)
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True) 
+    
+    # --- NEW: Add registered_on field for User Management panel ---
+    # Using func.now() and DateTime without explicit timezone setting is fine for SQL default generation
+    # if you are setting the timezone behavior in the database connection/config, 
+    # but using Python's datetime.now(UTC) is safer for FastAPI default behavior.
+    registered_on = Column(DateTime, default=datetime.now(UTC))
+    # ------------------------------------------------------------
     
     # Relationship for all the sweets this user/admin manages
     sweets = relationship("Sweet", back_populates="owner")
@@ -20,7 +32,7 @@ class User(Base):
     # NEW: Relationship for all orders placed by this user
     orders = relationship("Order", back_populates="owner") 
     
-# --- Sweet Model (Updated) ---  
+# --- Sweet Model (Updated) ---  
 class Sweet(Base):
     __tablename__ = "sweets"
 
@@ -54,7 +66,6 @@ class Order(Base):
     total_price = Column(Float, nullable=False)
     
     # Timestamps
-    # FIX APPLIED: Changed datetime.utcnow to datetime.now(UTC)
     created_at = Column(DateTime, default=datetime.now(UTC))
     updated_at = Column(DateTime, default=datetime.now(UTC), onupdate=datetime.now(UTC))
     
